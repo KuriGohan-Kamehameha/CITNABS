@@ -1,4 +1,4 @@
-// summon.ino — M5StickS3 paging device v3
+// summon.ino — M5StickS3 paging device v4 (battery-optimized)
 // BtnA        = summon / dismiss inbound alarm
 // BtnB single = quiet countdown
 // BtnB double = cycle volume (MUTE→LOW→MED→HIGH)
@@ -7,13 +7,15 @@
 #include <M5Unified.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_pm.h>
+#include <esp_sleep.h>
 #include <WiFi.h>
 #include <Preferences.h>
 
 // ─── Tunables ───────────────────────────────────────────────────────────────
 #define ESPNOW_CHANNEL      6
-#define PEER_TIMEOUT_MS     3000
-#define HEARTBEAT_MS        750
+#define PEER_TIMEOUT_MS     6000     // tolerate 3 missed heartbeats
+#define HEARTBEAT_MS        2000     // slower beat → less radio time
 #define SUMMON_DURATION_MS  30000
 #define ACK_COUNTDOWN_MS    20000
 #define AWAIT_ACK_MS        30000
@@ -23,13 +25,15 @@
 #define PAIR_BEACON_MS      400
 #define PAIR_OK_SHOW_MS     2500
 #define SLEEP_TIMEOUT_MS    5000
-#define BAT_POLL_MS         5000
+#define BAT_POLL_MS         30000    // battery state changes slowly
 #define LOW_BAT_PCT         15
 #define LOW_BAT_CHIRP_MS    60000
 #define BRIGHT              100
 #define REJECT_BEEP_HZ      400
 #define DTAP_WINDOW_MS      400
 #define VOL_TOAST_MS        2000
+#define IDLE_TICK_MS        20       // FreeRTOS yield window for auto light-sleep
+#define BUSY_TICK_MS        4        // shorter when alarm/countdown active
 
 // ─── Colors (blue-on-black theme) ───────────────────────────────────────────
 #define COL_BG       BLACK    // normal background
@@ -285,6 +289,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);     // let radio sleep between events
 
   if (esp_now_init() != ESP_OK) {
     M5.Display.fillScreen(COL_BG);
@@ -296,6 +301,16 @@ void setup() {
   }
   esp_now_register_recv_cb(on_recv);
   add_peer(bcast);
+
+  // Battery: automatic light-sleep + CPU scaling between events.
+  // min=max=80MHz keeps WiFi stable; light_sleep_enable lets the FreeRTOS
+  // idle task drop the CPU when there's nothing to do.
+  esp_pm_config_t pm_cfg = {
+    .max_freq_mhz       = 80,
+    .min_freq_mhz       = 80,
+    .light_sleep_enable = true,
+  };
+  (void) esp_pm_configure(&pm_cfg);
 
   // hold BtnB during first 300ms after boot → factory-reset pairing
   uint32_t end = millis() + 300;
@@ -331,6 +346,7 @@ void loop() {
     static uint32_t last_beacon = 0, last_draw = 0;
     if (now - last_beacon >= PAIR_BEACON_MS) { send_to(bcast, K_PAIR_HELLO); last_beacon = now; }
     if (pair_event || now - last_draw >= 300) { last_draw = now; pair_event = false; draw_pairing_screen(); }
+    delay(BUSY_TICK_MS);
     return;
   }
 
@@ -340,6 +356,7 @@ void loop() {
     static uint32_t last_echo = 0, last_draw = 0;
     if (now - last_echo >= 150) { send_to(peer_mac, K_PAIR_HELLO); last_echo = now; }
     if (now - last_draw >= 200) { last_draw = now; draw_paired_screen(); }
+    delay(BUSY_TICK_MS);
     return;
   }
 
@@ -428,14 +445,18 @@ void loop() {
   if (!keep_on && !last_charging && (now - last_activity_ms) >= SLEEP_TIMEOUT_MS) { doze(); }
   else                                                                            { wake(); }
 
-  if (!display_on) { return; }
+  if (!display_on) { delay(IDLE_TICK_MS); return; }
 
   static uint32_t last_draw = 0;
-  if (now - last_draw < 150) { return; }
+  if (now - last_draw < 150) { delay(BUSY_TICK_MS); return; }
   last_draw = now;
 
   if (!keep_on && last_charging) { draw_charging_screen(); }
   else                           { draw_main(summoning, counting, waiting, peer_ok, now); }
 
   if (now < vol_toast_until) { draw_vol_toast(); }
+
+  // Yield to FreeRTOS idle so the CPU can light-sleep. Tighter window when
+  // there's an active alarm/countdown so beep timing stays crisp.
+  delay(keep_on ? BUSY_TICK_MS : IDLE_TICK_MS);
 }

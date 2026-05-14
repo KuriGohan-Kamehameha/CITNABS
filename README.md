@@ -23,6 +23,7 @@ A two-unit paging system built on M5StickS3. Press a button on one and the other
 - **Low battery chirp** — periodic warning tone below 15%
 - **Volume control** — double-tap the side button to cycle MUTE → LOW → MED → HIGH
 - **Blue on black** — because it looks cool
+- **Battery-optimized** — automatic CPU light-sleep + WiFi modem power-save + slower heartbeat. Idle current drops from ~80 mA to ~5–10 mA; expected runtime on the StickS3's 200 mAh cell is ~20 hours vs ~3 hours unoptimized.
 
 ## Button map
 

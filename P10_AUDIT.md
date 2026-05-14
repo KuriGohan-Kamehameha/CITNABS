@@ -1,4 +1,4 @@
-# P10 audit — summon.ino v2
+# P10 audit — summon.ino v4 (battery-optimized)
 
 Built: `arduino-cli compile --fqbn m5stack:esp32:m5stack_sticks3 --warnings all`
 Result: 1,100,567 B flash (32%), 47,944 B RAM (14%). Zero warnings originating
@@ -29,6 +29,20 @@ re-defining macros already set in `Arduino.h` (`NUM_DIGITAL_PINS`,
 - **Volatile correctness**: All variables written by `on_recv` (ESP-NOW receive task context) and read by `loop` (main task) are `volatile`. 32-bit aligned reads/writes are atomic on ESP32-S3, so no explicit barriers needed for these small scalars.
 - **NVS preserved across flashes**: pairing survives a re-upload because `arduino-cli upload` only writes the app partition.
 - **Power-safe sleep**: `setBrightness(0)` is used instead of `Display.sleep()` to avoid the ST7789 wake-glitch and to give millisecond wake-up on incoming summons.
+
+## v4 power-management notes
+
+- `esp_pm_configure({80, 80, light_sleep=true})` lets the FreeRTOS idle task
+  drop the CPU into light sleep between events. WiFi remains in MIN_MODEM
+  power-save so ESP-NOW RX is preserved.
+- Each `loop()` path ends in `delay(BUSY_TICK_MS)` or `delay(IDLE_TICK_MS)`,
+  which yields to the idle task — without a yield, light sleep can never
+  trigger.
+- Heartbeat is now 2000 ms (was 750); peer-loss timeout is 6000 ms
+  (3 missed beats). Reduces radio TX bursts ~3×.
+- Battery poll dropped from 5 s → 30 s; the percentage doesn't move faster
+  than that.
+- These changes don't alter the state machine or any rule judgement above.
 
 ## Verdict
 
