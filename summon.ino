@@ -34,6 +34,7 @@
 #define VOL_TOAST_MS        2000
 #define IDLE_TICK_MS        20       // FreeRTOS yield window for auto light-sleep
 #define BUSY_TICK_MS        4        // shorter when alarm/countdown active
+#define VERSION             "v4"     // displayed in screen corner
 
 // ─── Colors (blue-on-black theme) ───────────────────────────────────────────
 #define COL_BG       BLACK    // normal background
@@ -274,6 +275,13 @@ static void draw_main(bool summoning, bool counting, bool waiting,
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(COL_SEC, COL_BG);
     M5.Display.setCursor(4, 218);  M5.Display.print("dbl-B: volume");
+  }
+
+  // version number — bottom-right corner on all non-alarm screens
+  if (!summoning) {
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(COL_SEC, COL_BG);
+    M5.Display.setCursor(119, 228); M5.Display.print(VERSION);
   }
 }
 
